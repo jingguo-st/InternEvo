@@ -11,9 +11,9 @@ from internlm.core.context import global_context as gpc
 from transformers import AutoTokenizer
 
 
-class HuggingFaceStreamingDataset(Dataset):
+class StreamingDataset(Dataset):
     """
-    Streaming and on-the-fly tokenized dataset for huggingface
+    Streaming and on-the-fly tokenized dataset
     """
 
     def __init__(
@@ -47,7 +47,6 @@ class HuggingFaceStreamingDataset(Dataset):
         texts = [sample["text"] for sample in samples]
         tokenized_outputs = self.tokenizer(texts, truncation=True)
         for i in range(len(samples)):
-            assert "input_ids" in tokenized_outputs, "huggingface tokenizer should generate input_ids"
             if len(tokenized_outputs["input_ids"][i]) > 0:
                 yield {key: tokenized_outputs[key][i] for key in tokenized_outputs}
 
@@ -55,9 +54,9 @@ class HuggingFaceStreamingDataset(Dataset):
         return next(self.senior_iterator)
 
 
-class HuggingFacePackedDataset(Dataset):
+class StreamingPackedDatasetWithCut(Dataset):
     """
-    Simple packed dataset for huggingface
+    Packed dataset for streaming
     """
 
     def __init__(self, dataset, seq_len, micro_bsz, pad_token_id=0):

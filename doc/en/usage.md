@@ -11,7 +11,7 @@ If you are using the HuggingFace datasets for on-the-fly streaming load and toke
 ```python
 TRAIN_FOLDER = "roneneldan/TinyStories"
 data = dict(
-    type="hf",
+    type="streaming",
     tokenizer_path="internlm/internlm-7b",
 )
 ```
@@ -117,7 +117,7 @@ ckpt = dict(
     # 1. the 'path' indicate ckpt path,
     # 2. the 'content‘ means what states will be loaded, support: "model", "sampler", "optimizer", "scheduler", "all"
     # 3. the ’ckpt_type‘ means the type of checkpoint to be loaded, now only 'normal' type is supported.
-    load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internlm"),
+    load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internevo"),
     checkpoint_every=CHECKPOINT_EVERY,
     async_upload=True,  # async ckpt upload. (only work for boto3 ckpt)
     async_upload_tmp_folder="/dev/shm/internlm_tmp_ckpt/",  # path for temporarily files during asynchronous upload.
@@ -295,8 +295,8 @@ ckpt = dict(
     # When resuming training from a breakpoint,:
     # (1) 'path' is the path of the loaded checkpoint.
     # (2) 'content' indicates which state will be loaded, support: "model", "sampler", "optimizer", "scheduler", "all"
-    # (3) 'ckpt_type' indicates which type ckpt will be loaded, currently supported: "internlm"
-    load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internlm"),
+    # (3) 'ckpt_type' indicates which type ckpt will be loaded, currently supported: "internevo"
+    load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internevo"),
 )
 ```
 

@@ -36,7 +36,7 @@ CheckpointManager
   ckpt = dict(
       enable_save_ckpt=False,  # enable ckpt save.
       save_ckpt_folder=SAVE_CKPT_FOLDER,  # Path to save training ckpt.
-      load_ckpt_info=dict(path="local:/mnt/mfs/ckpt", content=["all",], ckpt_type="internlm"), 
+      load_ckpt_info=dict(path="local:/mnt/mfs/ckpt", content=["all",], ckpt_type="internevo"),
       auto_resume=False, # disable auto-resume, internlm will load model checkpoint from the path of 'load_ckpt_info'.
       checkpoint_every=CHECKPOINT_EVERY,
       async_upload=True,  # async ckpt upload. (only work for boto3, volc and oss2 ckpt)
@@ -95,7 +95,6 @@ load_ckpt_info 由三个字段组成， ``path`` 、 ``content`` 和 ``ckpt_type
   - ``internevo``：internevo约定的checkpoint存储格式。
   - ``llama``：llama约定的checkpoint存储格式。
   - ``hf_llama``：huggingface llama约定的checkpoint存储格式。
-  - ``hf_model``：适用于加载huggingface所有模型的checkpoint存储格式。
 
 下面给出两个例子：
 
@@ -106,10 +105,6 @@ load_ckpt_info 由三个字段组成， ``path`` 、 ``content`` 和 ``ckpt_type
 
   # 从文件存储相对路径 ckpt_model 中加载所有的状态，适合断点续训的场景
   load_ckpt_info = dict(path="local:ckpt_model", content=("all",), ckpt_type="internevo")
-
-  # 从 huggingface 下载指定模型，加载checkpoint
-  load_ckpt_info = dict(path="internlm/internlm-7b", content=("model",), ckpt_type="hf_model")
-
 
 .. _asyncupload:
 
@@ -179,4 +174,3 @@ config.ckpt 中相关的参数：
   # 如果存入的step>0，则任务会在存储ckpt后自动退出
   # 如果存入的step<0，则任务会在存储ckpt后会继续训练
   echo "999" > ./llm_alter/1006_pr.log
-

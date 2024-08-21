@@ -11,7 +11,7 @@
 ```python
 TRAIN_FOLDER = "roneneldan/TinyStories"
 data = dict(
-    type="hf",
+    type="streaming",
     tokenizer_path="internlm/internlm-7b",
 )
 ```
@@ -106,7 +106,7 @@ ckpt = dict(
     # 'load_ckpt_info' setting guide:
     # 1. the 'path' indicate ckpt path,
     # 2. the 'content‘ means what states will be loaded, support: "model", "sampler", "optimizer", "scheduler", "all"
-    # 3. the ’ckpt_type‘ means the type of checkpoint to be loaded, support: "internevo", "llama", "hf_llama", "hf_model".
+    # 3. the ’ckpt_type‘ means the type of checkpoint to be loaded, support: "internevo", "llama", "hf_llama".
     load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internevo"),
     # 'auto_resume' is designed to automatically load the latest checkpoint from 'save_ckpt_folder' when encountering
     # training interruptions/hangs caused by hardware failures, using a scheduling system (such as k8s/slurm)
@@ -327,7 +327,7 @@ train_folder设置为huggingface上可以通过load_dataset直接下载的数据
 TRAIN_FOLDER = "roneneldan/TinyStories"
 SEQ_LEN = 2048
 data = dict(
-    type="hf",
+    type="streaming",
     tokenizer_path="internlm/internlm-7b",
     seq_len=SEQ_LEN,  # 数据样本长度，默认值为 2048
     micro_num=1,  # micro_num 是指在一次模型参数更新中会处理的 micro_batch 的数目，默认值为 1
@@ -353,10 +353,8 @@ ckpt = dict(
     checkpoint_every=float("inf"),  # 每多少个 step 存储一次 checkpoint，默认值为 inf
     # 断点续训时，加载模型和优化器等权重的路径，将从指定的 step 恢复训练
     # content 表示哪些状态会被加载，支持： "model", "sampler", "optimizer", "scheduler", "all"
-    # ckpt_type 表示加载的模型类型，目前支持: "internevo", "llama", "hf_llama", "hf_model"
-    # 其中，"hf_model"类型表示从huggingface上下载模型加载ckpt，MODEL_ONLY_FOLDER需要设置为可以
-    # 通过AutoModel直接加载的模型路径，如："internlm/internlm-7b"
-    load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internlm"),
+    # ckpt_type 表示加载的模型类型，目前支持: "internevo", "llama", "hf_llama"
+    load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internevo"),
     # 'auto_resume' 旨在在遇到由硬件故障引起的训练中断/挂起时，自动从 'save_ckpt_folder' 加载最新的检查点，
     # 使用调度系统（例如 k8s/slurm）在训练重启时自动重启机制。
     # 请注意，如果未设置 auto_resume（其默认值为 True），它将不会默认加载 load_ckpt_info 中指定的检查点路径。
