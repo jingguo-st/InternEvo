@@ -106,7 +106,7 @@ ckpt = dict(
     # 'load_ckpt_info' setting guide:
     # 1. the 'path' indicate ckpt path,
     # 2. the 'content‘ means what states will be loaded, support: "model", "sampler", "optimizer", "scheduler", "all"
-    # 3. the ’ckpt_type‘ means the type of checkpoint to be loaded, support: "internevo", "llama", "hf_llama".
+    # 3. the ’ckpt_type‘ means the type of checkpoint to be loaded, support: "internevo", "llama", "hf".
     load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internevo"),
     # 'auto_resume' is designed to automatically load the latest checkpoint from 'save_ckpt_folder' when encountering
     # training interruptions/hangs caused by hardware failures, using a scheduling system (such as k8s/slurm)
@@ -353,7 +353,7 @@ ckpt = dict(
     checkpoint_every=float("inf"),  # 每多少个 step 存储一次 checkpoint，默认值为 inf
     # 断点续训时，加载模型和优化器等权重的路径，将从指定的 step 恢复训练
     # content 表示哪些状态会被加载，支持： "model", "sampler", "optimizer", "scheduler", "all"
-    # ckpt_type 表示加载的模型类型，目前支持: "internevo", "llama", "hf_llama"
+    # ckpt_type 表示加载的模型类型，目前支持: "internevo", "llama", "hf"
     load_ckpt_info=dict(path=MODEL_ONLY_FOLDER, content=("model",), ckpt_type="internevo"),
     # 'auto_resume' 旨在在遇到由硬件故障引起的训练中断/挂起时，自动从 'save_ckpt_folder' 加载最新的检查点，
     # 使用调度系统（例如 k8s/slurm）在训练重启时自动重启机制。

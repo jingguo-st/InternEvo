@@ -13,6 +13,7 @@ from internlm.initialize.initialize_tensor import (
     scaled_init_method_uniform,
     uniform_,
 )
+from internlm.model.base_model import BaseModel
 from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import new_linear
 from internlm.model.modules.mha import GQA
@@ -277,7 +278,7 @@ class InternLM2Decoder(nn.Module):
             return hidden_states
 
 
-class InternLM2(nn.Module):
+class InternLM2(BaseModel):
     """
     InternLM2 Model.
 
@@ -456,3 +457,7 @@ class InternLM2(nn.Module):
             hidden_states = self.output(hidden_states)
 
         return hidden_states
+
+    @staticmethod
+    def load_hf_weights(folder: str, model: nn.Module):
+        raise NotImplementedError

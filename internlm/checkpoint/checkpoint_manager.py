@@ -16,6 +16,7 @@ from internlm.initialize.legacy.launch import (
     auto_resume_sanity_check,
     ckpt_info_sanity_check,
 )
+from internlm.model.registry import model_initializer
 from internlm.monitor import send_alert_message
 from internlm.solver.optimizer import HybridZeroOptimizer, HybridZeroOptimizer_v2
 from internlm.utils.common import get_current_device
@@ -278,10 +279,20 @@ class CheckpointManager:
         self.model_config = model_config
         self.model_config_file = model_config_file
 
-        # Register defalut internlm ckpt load type.
+        # Register pre-defined ckpt load type.
         self.defalut_load_type_func = {
             k: partial(try_load_internlm_ckpt_func, func=v) for k, v in LOAD_FUNC_DICT.items()
         }
+        # Register huggingface ckpt load type
+        self.defalut_load_type_func.update(
+            {
+                "hf": partial(
+                    try_load_internlm_ckpt_func,
+                    func=model_initializer.get_module(module_name=gpc.config.model_type).load_hf_weights,
+                )
+            }
+        )
+
         for ckpt_load_type, func in self.defalut_load_type_func.items():
             CheckpointLoadMethod.register_ckpt_load_type(ckpt_load_type, func)
 
