@@ -155,8 +155,12 @@ def build_train_loader_with_data_type():
 
     if data_cfg.type == DataType.tokenized.name:
         train_ds, train_sampler, train_collate_fn = get_tokenized_train_loader_items(data_cfg)
+        train_folder = data_cfg.get("train_folder", None)
+        dataset_types = list(get_dataset_type_ids_map(train_folder).keys()) if train_folder else ["en", "cn", "code"]
     elif data_cfg.type == DataType.streaming.name:
         train_ds, train_sampler, train_collate_fn = get_streaming_train_loader_items(data_cfg)
+        # TODO: support more dataset_types
+        dataset_types = ["en"]
     else:
         raise ValueError(f"dataset type {data_cfg.type} is not supported")
 
@@ -169,9 +173,6 @@ def build_train_loader_with_data_type():
         collate_fn=train_collate_fn,
         persistent_workers=data_cfg.get("num_worker", 4) > 0,
     )
-
-    train_folder = data_cfg.get("train_folder", None)
-    dataset_types = list(get_dataset_type_ids_map(train_folder).keys()) if train_folder else ["en", "cn", "code"]
 
     return train_dl, dataset_types
 
