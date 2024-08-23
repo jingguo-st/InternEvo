@@ -365,7 +365,103 @@ class InternLM1(BaseModel):
 
     @staticmethod
     def load_hf_weights(folder: str, model: nn.Module):
-        raise NotImplementedError
+        """NOTE: when loading huggingface's llama pretrained weights, you should set `adapt_hf=True` in your config."""
+        assert folder is not None, "Please specify the folder of the pretrained model"
+        if gpc.is_rank_for_log():
+            logger.info(f"Loading pretrained model from {folder}")
+
+        fns = get_fns(folder)
+        model_fns = [os.path.join(folder, fn) for fn in fns if fn.endswith(".bin") or fn.endswith(".safetensors")]
+        model_fns.sort()
+
+        states = {}
+
+        for model_fn in model_fns:
+            states.update(llm_load(model_fn, map_location="cpu"))
+
+        current_states = {}
+        for idx, i in enumerate(range(model.first_layer, model.last_layer)):
+            layer_ids = i
+
+            # attn
+            q_proj_weight = torch.chunk(
+                states.pop(f"model.layers.{layer_ids}.self_attn.q_proj.weight"),
+                gpc.get_world_size(ParallelMode.TENSOR),
+                dim=0,
+            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            k_proj_weight = torch.chunk(
+                states.pop(f"model.layers.{layer_ids}.self_attn.k_proj.weight"),
+                gpc.get_world_size(ParallelMode.TENSOR),
+                dim=0,
+            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            v_proj_weight = torch.chunk(
+                states.pop(f"model.layers.{layer_ids}.self_attn.v_proj.weight"),
+                gpc.get_world_size(ParallelMode.TENSOR),
+                dim=0,
+            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            states[f"blocks.{i}.mixer.wqkv.weight"] = torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], dim=0)
+
+            states[f"blocks.{i}.mixer.out_proj.weight"] = torch.chunk(
+                states.pop(f"model.layers.{layer_ids}.self_attn.o_proj.weight"),
+                gpc.get_world_size(ParallelMode.TENSOR),
+                dim=1,
+            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+
+            # mlp
+            states[f"blocks.{i}.mlp.w1.weight"] = torch.chunk(
+                states.pop(f"model.layers.{layer_ids}.mlp.gate_proj.weight"),
+                gpc.get_world_size(ParallelMode.TENSOR),
+                dim=0,
+            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            states[f"blocks.{i}.mlp.w3.weight"] = torch.chunk(
+                states.pop(f"model.layers.{layer_ids}.mlp.up_proj.weight"),
+                gpc.get_world_size(ParallelMode.TENSOR),
+                dim=0,
+            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            states[f"blocks.{i}.mlp.w2.weight"] = torch.chunk(
+                states.pop(f"model.layers.{layer_ids}.mlp.down_proj.weight"),
+                gpc.get_world_size(ParallelMode.TENSOR),
+                dim=1,
+            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+
+            # attn norm
+            states[f"blocks.{i}.norm1.weight"] = states.pop(f"model.layers.{layer_ids}.input_layernorm.weight")
+            # mlp norm
+            states[f"blocks.{i}.norm2.weight"] = states.pop(f"model.layers.{layer_ids}.post_attention_layernorm.weight")
+
+            for name in list(states.keys()):
+                if name.startswith(f"blocks.{i}"):
+                    current_states[name.replace(f".{i}.", f".{idx}.")] = states.pop(name)
+
+        model_state_keys = set(list(model.state_dict().keys()))
+
+        if "embedding.weight" in model_state_keys or "embedding.word_embeddings.weight" in model_state_keys:
+            if gpc.config.model.get("embed_split_hidden", True):
+                current_states["embedding.weight"] = torch.chunk(
+                    states["model.embed_tokens.weight"], gpc.get_world_size(ParallelMode.TENSOR), dim=1
+                )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            else:
+                current_states["embedding.word_embeddings.weight"] = torch.chunk(
+                    states["model.embed_tokens.weight"], gpc.get_world_size(ParallelMode.TENSOR), dim=1
+                )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            assert model.first_layer == 0, f"Expect model.first_layer to be 0, but got {model.first_layer}"
+
+        if "head.weight" in model_state_keys:
+            current_states["norm.weight"] = states["model.norm.weight"]
+            current_states["head.weight"] = torch.chunk(
+                states["lm_head.weight"], gpc.get_world_size(ParallelMode.TENSOR), dim=0
+            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+
+        missing_keys, unexpected_keys = model.load_state_dict(current_states, strict=False)
+
+        if gpc.get_local_rank(ParallelMode.DATA) == 0:
+            pp_rank = 0 if not gpc.is_initialized(ParallelMode.PIPELINE) else gpc.get_local_rank(ParallelMode.PIPELINE)
+            logger.info(
+                f"Missing keys:{missing_keys}, unexpected keys:{unexpected_keys} in "
+                f"tp:{gpc.get_local_rank(ParallelMode.TENSOR)}, pp:{pp_rank}"
+            )
+
+        internlm_accelerator.empty_cache()
 
     @staticmethod
     def load_internlm_with_dynamic_parallel_size(folder: str, model: nn.Module):

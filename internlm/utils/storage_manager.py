@@ -4,6 +4,8 @@
 import multiprocessing
 import os
 
+from safetensors.torch import load_file
+
 from internlm.utils.common import SingletonMeta
 
 if "USE_DILL_PICKLE" in os.environ:
@@ -823,6 +825,8 @@ class LocalClient(StorageClient):
     @staticmethod
     def load(load_path: str, **kwargs):
         assert os.path.exists(load_path), f"{load_path} is not found!"
+        if load_path.endswith(".safetensors"):
+            return load_file(load_path)
         with open(load_path, "rb") as f:
             states = torch.load(f, **kwargs)
         return states
