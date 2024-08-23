@@ -5,30 +5,18 @@
 ### 安装
 请参考[安装文档](./install.md)进行安装。
 
-### 数据准备 （预训练）
-#### 使用huggingface格式数据集
+### 数据准备 （使用huggingface数据集）
 
-如果使用huggingface数据集，需要先将数据集和需要使用的tokenizer下载到本地。
-
-以`roneneldan/TinyStories`这个数据为例，数据准备阶段需要通过如下命令将数据集下载到本地：
-```bash
-huggingface-cli download --repo-type dataset --resume-download "roneneldan/TinyStories" --local-dir "/mnt/petrelfs/hf-TinyStories"
-```
-其中，"/mnt/petrelfs/hf-TinyStories" 为需要将数据集保存的本地路径。
-
-然后将tokenizer下载到本地，例如，使用internlm2的tokenizer，则将`https://huggingface.co/internlm/internlm2-7b/tree/main`中的`special_tokens_map.json`、`tokenizer.model`、`tokenizer_config.json`、`tokenization_internlm2.py`和`tokenization_internlm2_fast.py`文件下载到本地路径，如"/mnt/petrelfs/hf-internlm2-tokenizer"中。
-
-将配置文件做如下改动：
-```bash
-TRAIN_FOLDER = "/mnt/petrelfs/hf-TinyStories"
+如果使用huggingface数据集进行在线加载并且在线tokenize的话，那么以`roneneldan/TinyStories`这个数据为例，数据准备阶段只需要将配置文件做如下改动：
+```python
+TRAIN_FOLDER = "roneneldan/TinyStories"
 data = dict(
     type="hf",
-    tokenizer_path="/mnt/petrelfs/hf-internlm2-tokenizer",
+    tokenizer_path="internlm/internlm-7b",
 )
 ```
-type默认为"tokenized"，这里需要改为"hf"类型。同时需要指定`tokenizer_path`, 如果使用下述tokenized之后的数据集，则不需要设置该字段。`TRAIN_FOLDER`指定本地数据集路径。
 
-#### 使用tokenized之后数据集
+### 数据准备 （预训练）
 
 InternEvo训练任务的数据集包括一系列的`bin`和`meta`文件。使用`tokenizer`从原始文本文件生成训练用数据集。通过在`tools/tokenizer.py`中指定模型参数路径的方式来导入tokenizer模型。目前提供`V7_sft.model`来生成tokens。若想使用不同的模型，可直接修改`tokernizer.py`中的模型参数路径。
 
@@ -333,16 +321,14 @@ data = dict(
 数据集的详细内容可参考``数据准备``模块相关的介绍。
 
 同时，也支持huggingface格式的数据集处理。
-
-train_folder设置为从huggingface上下载的本地数据集路径，如："/mnt/petrelfs/hf-TinyStories"
-
+train_folder设置为huggingface上可以通过load_dataset直接下载的数据集路径，如："roneneldan/TinyStories"
 在data中，需要新增type及tokenizer_path字段，标示数据集是huggingface格式，并指定tokenizer路径，如：
 ```python
-TRAIN_FOLDER = "/mnt/petrelfs/hf-TinyStories"
+TRAIN_FOLDER = "roneneldan/TinyStories"
 SEQ_LEN = 2048
 data = dict(
     type="hf",
-    tokenizer_path="/mnt/petrelfs/hf-internlm2-tokenizer",
+    tokenizer_path="internlm/internlm-7b",
     seq_len=SEQ_LEN,  # 数据样本长度，默认值为 2048
     micro_num=1,  # micro_num 是指在一次模型参数更新中会处理的 micro_batch 的数目，默认值为 1
     micro_bsz=1,  # packed_length = micro_bsz * SEQ_LEN，为一次处理的 micro_batch 的数据大小，默认值为 1
