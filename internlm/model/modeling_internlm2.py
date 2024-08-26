@@ -537,9 +537,7 @@ class InternLM2(BaseModel):
                     new_state_dict[name.replace(f".{i}.", f".{idx}.")] = state_dict.pop(name)
 
         # embedding
-        if (gpc.get_local_rank(ParallelMode.PIPELINE) - 1 == 0) or (
-            not gpc.is_using_parallel_mode(ParallelMode.PIPELINE)
-        ):
+        if (gpc.get_local_rank(ParallelMode.PIPELINE) == 0) or (not gpc.is_using_parallel_mode(ParallelMode.PIPELINE)):
             new_state_dict["tok_embeddings.weight"] = torch.chunk(
                 state_dict.pop("model.tok_embeddings.weight"),
                 split_size,
@@ -553,9 +551,11 @@ class InternLM2(BaseModel):
                 split_size,
                 dim=0,
             )[local_rank]
-            new_state_dict["norm.weight"] = state_dict["model.norm.weight"]
+            new_state_dict["norm.weight"] = state_dict.pop("model.norm.weight")
 
         missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=False)
+        if len(state_dict) > 0:
+            logger.warning(f"Be cautious, checkpoint state_dict keys={state_dict.keys()} have not beed loaded.")
 
         if gpc.get_local_rank(ParallelMode.DATA) == 0:
             pp_rank = 0 if not gpc.is_initialized(ParallelMode.PIPELINE) else gpc.get_local_rank(ParallelMode.PIPELINE)

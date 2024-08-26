@@ -462,15 +462,17 @@ class InternLM1(BaseModel):
                 f"model.layers.{layer_ids}.post_attention_layernorm.weight"
             )
 
+            # skip rotary_emb inv_freq
+            if f"model.layers.{layer_ids}.self_attn.rotary_emb.inv_freq" in state_dict:
+                state_dict.pop(f"model.layers.{layer_ids}.self_attn.rotary_emb.inv_freq")
+
             # replace value within decoder layer
             for name in list(state_dict.keys()):
                 if name.startswith(f"blocks.{i}"):
                     new_state_dict[name.replace(f".{i}.", f".{idx}.")] = state_dict.pop(name)
 
         # embedding
-        if (gpc.get_local_rank(ParallelMode.PIPELINE) - 1 == 0) or (
-            not gpc.is_using_parallel_mode(ParallelMode.PIPELINE)
-        ):
+        if (gpc.get_local_rank(ParallelMode.PIPELINE) == 0) or (not gpc.is_using_parallel_mode(ParallelMode.PIPELINE)):
             new_state_dict["embedding.weight"] = torch.chunk(
                 state_dict.pop("model.embed_tokens.weight"),
                 split_size,
@@ -484,9 +486,11 @@ class InternLM1(BaseModel):
                 split_size,
                 dim=0,
             )[local_rank]
-            new_state_dict["norm.weight"] = state_dict["model.norm.weight"]
+            new_state_dict["norm.weight"] = state_dict.pop("model.norm.weight")
 
         missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=False)
+        if len(state_dict) > 0:
+            logger.warning(f"Be cautious, checkpoint state_dict keys={state_dict.keys()} have not beed loaded.")
 
         if gpc.get_local_rank(ParallelMode.DATA) == 0:
             pp_rank = 0 if not gpc.is_initialized(ParallelMode.PIPELINE) else gpc.get_local_rank(ParallelMode.PIPELINE)
