@@ -10,23 +10,23 @@ CheckpointManager
 
 ``CheckpointManager`` 是InternEvo负责进行模型加载和保存的工具类，其会使用config文件中的ckpt字段的初始化参数字典初始化自身的参数，目前相关的参数有：
 
-- ``enable_save_ckpt``: 是否开启检查点存储功能（不影响检查点加载）。参数类型 ``bool``，必选参数。
+- ``enable_save_ckpt`` : 是否开启检查点存储功能（不影响检查点加载）。参数类型 ``bool`` ，必选参数。
 
-- ``save_ckpt_folder``: 检查点存储路径，参数类型 ``str``，默认为： ``None``，在开启检查点存储功能时为必选参数。
+- ``save_ckpt_folder`` : 检查点存储路径，参数类型 ``str`` ，默认为： ``None`` ，在开启检查点存储功能时为必选参数。
 
-- ``checkpoint_every``: 检查点存储频率，参数类型 ``int``，默认为： ``50``。
+- ``checkpoint_every`` : 检查点存储频率，参数类型 ``int`` ，默认为： ``50`` 。
 
-- ``load_ckpt_info``: 初始化检查点/权重加载信息。参数类型 ``dict``，默认为： ``None``，详见 :ref:`load-ckpt-info`。
+- ``load_ckpt_info`` : 初始化检查点/权重加载信息。参数类型 ``dict`` ，默认为： ``None`` ，详见 :ref: `load-ckpt-info` 。
 
-- ``async_upload``: 是否开启异步上传，默认值为：``False``，详见 :ref:`asyncupload`。
+- ``async_upload`` : 是否开启异步上传，默认值为： ``False`` ，详见 :ref: `asyncupload` 。
 
-- ``async_upload_tmp_folder``: 异步上传临时存储路径。
+- ``async_upload_tmp_folder`` : 异步上传临时存储路径。
 
-- ``oss_snapshot_freq``: 快照存储频率，默认值为：``checkpoint_every``的一半。详见 :ref:`snapshot`。
+- ``oss_snapshot_freq`` : 快照存储频率，默认值为： ``checkpoint_every`` 的一半。详见 :ref: `snapshot` 。
 
-- ``auto_resume``: 是否开启检查点自动恢复，默认值为：``True``，详见 :ref:`autoresume`。
+- ``auto_resume`` : 是否开启检查点自动恢复，默认值为： ``True`` ，详见 :ref: `autoresume` 。
 
-- ``stop_file_path`` : 检查点存储控制文件的路径，默认值为：``None``，详见 :ref:`stopfile`。
+- ``stop_file_path`` : 检查点存储控制文件的路径，默认值为： ``None`` ，详见 :ref: `stopfile` 。
 
 
 下面给出config文件的参数设置例子：
@@ -93,8 +93,8 @@ load_ckpt_info 由三个字段组成， ``path`` 、 ``content`` 和 ``ckpt_type
 - ``ckpt_type``：表示加载的模型权重类型，目前支持的字段包括：
 
   - ``internevo``：internevo约定的checkpoint存储格式。
-  - ``llama``：llama约定的checkpoint存储格式。
-  - ``hf_llama``：huggingface llama约定的checkpoint存储格式。
+  - ``llama``：huggingface llama约定的checkpoint存储格式。
+  - ``hf``：huggingface 模型约定的checkpoint存储格式。
 
 下面给出两个例子：
 
