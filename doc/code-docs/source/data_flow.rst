@@ -227,6 +227,7 @@ pack之后的数据格式如下：
 经过 ``unpack_data`` 处理之后， ``data["input_ids"]`` 和 ``label`` 分别如下：
 
 .. code-block:: python
+
     data["input_ids"]:
     tensor([[2323,  442,  252,  341,  0,    0,     0,   0],
             [233,   3442, 322,  31,   2514, 49731, 51,  0]])
