@@ -374,85 +374,119 @@ class InternLM1(BaseModel):
         model_fns = [os.path.join(folder, fn) for fn in fns if fn.endswith(".bin") or fn.endswith(".safetensors")]
         model_fns.sort()
 
-        states = {}
-
+        state_dict = {}
         for model_fn in model_fns:
-            states.update(llm_load(model_fn, map_location="cpu"))
+            state_dict.update(llm_load(model_fn, map_location="cpu"))
 
-        current_states = {}
+        tp_size = gpc.get_world_size(ParallelMode.TENSOR)
+        tp_rank = gpc.get_local_rank(ParallelMode.TENSOR)
+        wp_size = gpc.get_world_size(ParallelMode.WEIGHT)
+        wp_rank = gpc.get_local_rank(ParallelMode.WEIGHT)
+        tp_mode = gpc.config.parallel.tensor["mode"]
+        split_size = wp_size if tp_mode == "isp" else tp_size
+        local_rank = wp_rank if tp_mode == "isp" else tp_rank
+        row_dim = 0 if tp_mode == "isp" else 1
+        if gpc.config.model.get("embed_split_hidden", True):
+            embed_concat_dim = 1
+        else:
+            embed_concat_dim = 0
+
+        new_state_dict = {}
+
         for idx, i in enumerate(range(model.first_layer, model.last_layer)):
             layer_ids = i
 
             # attn
             q_proj_weight = torch.chunk(
-                states.pop(f"model.layers.{layer_ids}.self_attn.q_proj.weight"),
-                gpc.get_world_size(ParallelMode.TENSOR),
+                state_dict.pop(f"model.layers.{layer_ids}.self_attn.q_proj.weight"),
+                split_size,
                 dim=0,
-            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            )[local_rank]
+            q_proj_bias = torch.chunk(
+                state_dict.pop(f"model.layers.{layer_ids}.self_attn.q_proj.bias"),
+                split_size,
+            )[local_rank]
             k_proj_weight = torch.chunk(
-                states.pop(f"model.layers.{layer_ids}.self_attn.k_proj.weight"),
-                gpc.get_world_size(ParallelMode.TENSOR),
+                state_dict.pop(f"model.layers.{layer_ids}.self_attn.k_proj.weight"),
+                split_size,
                 dim=0,
-            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            )[local_rank]
+            k_proj_bias = torch.chunk(
+                state_dict.pop(f"model.layers.{layer_ids}.self_attn.k_proj.bias"),
+                split_size,
+            )[local_rank]
             v_proj_weight = torch.chunk(
-                states.pop(f"model.layers.{layer_ids}.self_attn.v_proj.weight"),
-                gpc.get_world_size(ParallelMode.TENSOR),
+                state_dict.pop(f"model.layers.{layer_ids}.self_attn.v_proj.weight"),
+                split_size,
                 dim=0,
-            )[gpc.get_local_rank(ParallelMode.TENSOR)]
-            states[f"blocks.{i}.mixer.wqkv.weight"] = torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], dim=0)
-
-            states[f"blocks.{i}.mixer.out_proj.weight"] = torch.chunk(
-                states.pop(f"model.layers.{layer_ids}.self_attn.o_proj.weight"),
-                gpc.get_world_size(ParallelMode.TENSOR),
-                dim=1,
-            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            )[local_rank]
+            v_proj_bias = torch.chunk(
+                state_dict.pop(f"model.layers.{layer_ids}.self_attn.v_proj.bias"),
+                split_size,
+            )[local_rank]
+            state_dict[f"blocks.{i}.mixer.wqkv.weight"] = torch.cat(
+                [q_proj_weight, k_proj_weight, v_proj_weight], dim=0
+            )
+            state_dict[f"blocks.{i}.mixer.wqkv.bias"] = torch.cat([q_proj_bias, k_proj_bias, v_proj_bias], dim=0)
+            state_dict[f"blocks.{i}.mixer.out_proj.weight"] = torch.chunk(
+                state_dict.pop(f"model.layers.{layer_ids}.self_attn.o_proj.weight"),
+                split_size,
+                dim=row_dim,
+            )[local_rank]
+            state_dict[f"blocks.{i}.mixer.out_proj.bias"] = torch.chunk(
+                state_dict.pop(f"model.layers.{layer_ids}.self_attn.o_proj.bias"),
+                split_size,
+            )[local_rank]
 
             # mlp
-            states[f"blocks.{i}.mlp.w1.weight"] = torch.chunk(
-                states.pop(f"model.layers.{layer_ids}.mlp.gate_proj.weight"),
-                gpc.get_world_size(ParallelMode.TENSOR),
+            state_dict[f"blocks.{i}.mlp.w1.weight"] = torch.chunk(
+                state_dict.pop(f"model.layers.{layer_ids}.mlp.gate_proj.weight"),
+                split_size,
                 dim=0,
-            )[gpc.get_local_rank(ParallelMode.TENSOR)]
-            states[f"blocks.{i}.mlp.w3.weight"] = torch.chunk(
-                states.pop(f"model.layers.{layer_ids}.mlp.up_proj.weight"),
-                gpc.get_world_size(ParallelMode.TENSOR),
+            )[local_rank]
+            state_dict[f"blocks.{i}.mlp.w3.weight"] = torch.chunk(
+                state_dict.pop(f"model.layers.{layer_ids}.mlp.up_proj.weight"),
+                split_size,
                 dim=0,
-            )[gpc.get_local_rank(ParallelMode.TENSOR)]
-            states[f"blocks.{i}.mlp.w2.weight"] = torch.chunk(
-                states.pop(f"model.layers.{layer_ids}.mlp.down_proj.weight"),
-                gpc.get_world_size(ParallelMode.TENSOR),
-                dim=1,
-            )[gpc.get_local_rank(ParallelMode.TENSOR)]
+            )[local_rank]
+            state_dict[f"blocks.{i}.mlp.w2.weight"] = torch.chunk(
+                state_dict.pop(f"model.layers.{layer_ids}.mlp.down_proj.weight"),
+                split_size,
+                dim=row_dim,
+            )[local_rank]
 
             # attn norm
-            states[f"blocks.{i}.norm1.weight"] = states.pop(f"model.layers.{layer_ids}.input_layernorm.weight")
+            state_dict[f"blocks.{i}.norm1.weight"] = state_dict.pop(f"model.layers.{layer_ids}.input_layernorm.weight")
             # mlp norm
-            states[f"blocks.{i}.norm2.weight"] = states.pop(f"model.layers.{layer_ids}.post_attention_layernorm.weight")
+            state_dict[f"blocks.{i}.norm2.weight"] = state_dict.pop(
+                f"model.layers.{layer_ids}.post_attention_layernorm.weight"
+            )
 
-            for name in list(states.keys()):
+            # replace value within decoder layer
+            for name in list(state_dict.keys()):
                 if name.startswith(f"blocks.{i}"):
-                    current_states[name.replace(f".{i}.", f".{idx}.")] = states.pop(name)
+                    new_state_dict[name.replace(f".{i}.", f".{idx}.")] = state_dict.pop(name)
 
-        model_state_keys = set(list(model.state_dict().keys()))
+        # embedding
+        if (gpc.get_local_rank(ParallelMode.PIPELINE) - 1 == 0) or (
+            not gpc.is_using_parallel_mode(ParallelMode.PIPELINE)
+        ):
+            new_state_dict["embedding.weight"] = torch.chunk(
+                state_dict.pop("model.embed_tokens.weight"),
+                split_size,
+                dim=embed_concat_dim,
+            )[local_rank]
 
-        if "embedding.weight" in model_state_keys or "embedding.word_embeddings.weight" in model_state_keys:
-            if gpc.config.model.get("embed_split_hidden", True):
-                current_states["embedding.weight"] = torch.chunk(
-                    states["model.embed_tokens.weight"], gpc.get_world_size(ParallelMode.TENSOR), dim=1
-                )[gpc.get_local_rank(ParallelMode.TENSOR)]
-            else:
-                current_states["embedding.word_embeddings.weight"] = torch.chunk(
-                    states["model.embed_tokens.weight"], gpc.get_world_size(ParallelMode.TENSOR), dim=1
-                )[gpc.get_local_rank(ParallelMode.TENSOR)]
-            assert model.first_layer == 0, f"Expect model.first_layer to be 0, but got {model.first_layer}"
+        # head
+        if gpc.is_last_rank(ParallelMode.PIPELINE):
+            new_state_dict["head.weight"] = torch.chunk(
+                state_dict.pop("lm_head.weight"),
+                split_size,
+                dim=0,
+            )[local_rank]
+            new_state_dict["norm.weight"] = state_dict["model.norm.weight"]
 
-        if "head.weight" in model_state_keys:
-            current_states["norm.weight"] = states["model.norm.weight"]
-            current_states["head.weight"] = torch.chunk(
-                states["lm_head.weight"], gpc.get_world_size(ParallelMode.TENSOR), dim=0
-            )[gpc.get_local_rank(ParallelMode.TENSOR)]
-
-        missing_keys, unexpected_keys = model.load_state_dict(current_states, strict=False)
+        missing_keys, unexpected_keys = model.load_state_dict(new_state_dict, strict=False)
 
         if gpc.get_local_rank(ParallelMode.DATA) == 0:
             pp_rank = 0 if not gpc.is_initialized(ParallelMode.PIPELINE) else gpc.get_local_rank(ParallelMode.PIPELINE)
