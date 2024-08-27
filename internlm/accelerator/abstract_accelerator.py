@@ -93,10 +93,10 @@ def get_accelerator():
         elif accelerator_name == "dipu":
             try:
                 import deeplink_ext  # noqa # pylint: disable=W0611
-                import torch_dipu  # noqa # pylint: disable=W0611
+                import ditorch  # noqa # pylint: disable=W0611
             except (ImportError, ModuleNotFoundError):
                 raise ValueError(
-                    "DIPU_Accelerator requires torch_dipu and deeplink_ext, which is not installed on this system."
+                    "DIPU_Accelerator requires ditorch and deeplink_ext, which is not installed on this system."
                 )
             pass
         elif accelerator_name != "cuda":
@@ -109,7 +109,7 @@ def get_accelerator():
     if accelerator_name is None:
         try:
             import deeplink_ext  # noqa: F401,F811 # type: ignore
-            import torch_dipu  # noqa: F401,F811 # type: ignore
+            import ditorch  # noqa: F401,F811 # type: ignore
 
             accelerator_name = "dipu"
         except (ImportError, ModuleNotFoundError):
