@@ -66,7 +66,7 @@ class PackedDataset(Dataset):
         }
         """
 
-        if gpc.config is None or gpc.config.model is None or gpc.config.data.use_packed_dataset:
+        if gpc.config.data.use_packed_dataset:
             return self.build_pack(item)
 
         return self.build_unpack(item)
@@ -349,8 +349,10 @@ class PackedDatasetWithCut(PackedDataset):
     def __len__(self):
         # Line 405 of document_to_sequence.py in metaseq is directly spliced,
         # without additional consideration of sos or eos
-        n_packs = self.num_tokens // self.packed_length
-        return n_packs
+        if gpc.config.data.use_packed_dataset:
+            n_packs = self.num_tokens // self.packed_length
+            return n_packs
+        return len(self.lengths)
 
     def cal_map(self, carriage_idx: int = 0):
         assert carriage_idx >= 0
@@ -424,13 +426,8 @@ class PackedDatasetWithCut(PackedDataset):
         return out
 
     def cal_pos_unpack(self, index):
-        if index == 0:
-            pre_pos = 0
-        else:
-            pre_pos = index * gpc.config.data["micro_bsz"]
-
-        pos = (index + 1) * gpc.config.data["micro_bsz"]
-        return pre_pos, pos
+        pos = index + gpc.config.data["micro_bsz"]
+        return index, pos
 
     def build_unpack(self, index):
         """
@@ -449,7 +446,7 @@ class PackedDatasetWithCut(PackedDataset):
         [14, 15, 16, 0, 0, 0]
 
         """
-
+        assert index < len(self.dataset), "the index should be smaller than the length of datasets."
         pre_pos, pos = self.cal_pos_unpack(index)
 
         pack, cu_seqlens, indexes, labels, type_ids = [], [0], [], [], []
@@ -599,6 +596,7 @@ class PackedDatasetWithPadForMultimodal(PackedDataset):
     Args:
         dataset: The original dataset to pack.
         max_length_per_sample: The maximum length of each original sample. Default is 2048.
+        padding_side: The padding side. Default is "right".
         packed_length: The length of each packed sample. Default is 4096.
         padding_idx: The token id of padding. Default is 0.
     """
@@ -609,13 +607,17 @@ class PackedDatasetWithPadForMultimodal(PackedDataset):
         max_length_per_sample: int = 2048,
         packed_length: int = 4096,
         padding_idx: int = 0,
+        padding_side: str = "right",
         image_token_id: int = 200000,
+        has_image: bool = True,
     ):
         super().__init__(dataset, max_length_per_sample, packed_length)
         self.padding_idx = padding_idx
+        self.padding_side = padding_side
         self.sample_indices, self.belongs = self.accu_sample_len(self.seed)
         self.num_tokens = sum(self.lengths)
         self.image_token_id = image_token_id
+        self.has_image = has_image
 
     def get_dataset_name(self):
         return self.dataset.get_dataset_name()
@@ -653,7 +655,10 @@ class PackedDatasetWithPadForMultimodal(PackedDataset):
 
     def build_pack(self, index):
 
-        pack, cu_seqlens, indexes, labels, type_ids, images = [], [0], [], [], [], []
+        pack, cu_seqlens, indexes, labels, type_ids = [], [0], [], [], []
+
+        if self.has_image:
+            images = []
 
         start_pos = np.searchsorted(self.belongs, index, "left")
         end_pos = np.searchsorted(self.belongs, index, "right")
@@ -665,8 +670,9 @@ class PackedDatasetWithPadForMultimodal(PackedDataset):
         for sample_idx in cur_samples:
             sample = self.dataset[sample_idx]
             length = min(len(sample["tokens"]), self.max_length_per_sample)
-            cur_images = sample["images"]
-            images.extend(cur_images)
+            if self.has_image:
+                cur_images = sample["images"]
+                images.extend(cur_images)
             chunk = sample["tokens"][:length]
             pack.extend(chunk)
             cu_seqlens.append(cu_seqlens[-1] + len(chunk))
@@ -680,10 +686,16 @@ class PackedDatasetWithPadForMultimodal(PackedDataset):
             indexes.extend(list(range(length)))
 
         if cu_seqlens[-1] != self.packed_length:
-            pack = pack + [self.padding_idx] * (self.packed_length - cu_seqlens[-1])
-            labels = labels + [-100] * (self.packed_length - cu_seqlens[-1])
-            type_ids = type_ids + [0] * (self.packed_length - cu_seqlens[-1])
-            indexes.extend([0] * (self.packed_length - cu_seqlens[-1]))
+            if self.padding_side == "right":
+                pack = pack + [self.padding_idx] * (self.packed_length - cu_seqlens[-1])
+                labels = labels + [-100] * (self.packed_length - cu_seqlens[-1])
+                type_ids = type_ids + [0] * (self.packed_length - cu_seqlens[-1])
+                indexes.extend([0] * (self.packed_length - cu_seqlens[-1]))
+            else:
+                pack = [self.padding_idx] * (self.packed_length - cu_seqlens[-1]) + pack
+                labels = [-100] * (self.packed_length - cu_seqlens[-1]) + labels
+                type_ids = [0] * (self.packed_length - cu_seqlens[-1]) + type_ids
+                indexes = [0] * (self.packed_length - cu_seqlens[-1]) + indexes
             cu_seqlens.append(self.packed_length)
 
         out = {

@@ -18,14 +18,18 @@ from internlm.core.naive_amp import unwrap_naive_amp
 from internlm.core.parallel.comm.utils import (
     DUMMY_HANDLE_CONST,
     AsyncCommHandle,
+    _gather,
     all_gather_raw,
+    apply_to_tensors_only,
     reduce_scatter_raw,
 )
+from internlm.model.modules.embedding import Embedding1D
 from internlm.model.modules.linear import ParallelLinearWithCommExt
 from internlm.utils.common import SchedulerHook, get_current_device
 from internlm.utils.utils import (
     CuSeqlenType,
     QKVPackType,
+    TensorParallelMode,
     check_attention_argument,
     params_dispatch_with_condition,
 )
@@ -57,6 +61,129 @@ class WPCommunicator(ABC):
         communication for grad when backward.
         """
         pass
+
+
+class HeadWeightParallelCommunicator(WPCommunicator):
+    """
+    Weight parallel communicator for Head module.
+    """
+
+    def __init__(self, process_group: dist.ProcessGroup = None) -> None:
+        self.process_group = process_group
+
+    def communication_mode(self) -> str:
+        return "wp"
+
+    def weight_hook(
+        self,
+        tensor: torch.Tensor,
+        async_op: bool = False,
+        module: nn.Module = None,  # pylint: disable=W0613
+        is_bias: bool = False,  # pylint: disable=W0613
+    ) -> torch.Tensor:
+        if dist.get_world_size(self.process_group) <= 1:
+            return tensor
+
+        result, _ = all_gather_raw(tensor, self.process_group, async_op=async_op)
+        return result
+
+    def grad_hook(
+        self,
+        tensor: torch.Tensor,
+        async_op: bool = False,
+        module: nn.Module = None,  # pylint: disable=W0613
+        reduce_op: dist.ReduceOp = dist.ReduceOp.AVG,
+        is_bias: bool = False,  # pylint: disable=W0613
+    ) -> Tuple[torch.Tensor, AsyncCommHandle]:
+        if dist.get_world_size(self.process_group) <= 1:
+            return tensor, DUMMY_HANDLE_CONST
+
+        result, handle = reduce_scatter_raw(tensor, self.process_group, op=reduce_op, async_op=async_op)
+        return result, handle
+
+
+class EmbeddingWeightParallelCommunicator:
+    """
+    Weight parallel communicator for embedding layer.
+    """
+
+    def __init__(self, parallel_mode: ParallelMode) -> None:
+        self.parallel_mode = parallel_mode
+        self.emb_column = 1
+
+        self._cur_micro_step = 0
+        self._num_micro_step = gpc.config.data.micro_num
+
+    def register_module_hook(self, module: Embedding1D) -> None:
+        assert isinstance(module, Embedding1D), "Embbeding weight parallel communicator is only support Embedding1D"
+
+        module.weight.evo_tensor = None
+
+        class PreModuleWrapper(torch.autograd.Function):
+            """
+            Wrapper pre module to prefetch module weight for forward pass.
+            """
+
+            @staticmethod
+            def forward(ctx, inputs: torch.Tensor):  # pylint: disable=W0613
+                if module.weight.evo_tensor is None:
+                    module.weight.evo_tensor = module.weight.data
+
+                module.weight.data = _gather(module.weight, self.parallel_mode, dim=self.emb_column)
+                inputs = inputs.detach()
+                return inputs
+
+            @staticmethod
+            def backward(ctx: Any, grad_input: torch.Tensor) -> torch.Tensor:  # pylint: disable=W0613
+                # since input of embedding is int64 dtype, requires_grad=False, the backward fn may not be called
+                module.weight.data = module.weight.evo_tensor
+                return grad_input
+
+        class PostModuleWrapper(torch.autograd.Function):
+            """
+            Wrapper post module to prefetch module weight for backward pass.
+            """
+
+            @staticmethod
+            def forward(ctx, output: torch.Tensor):  # pylint: disable=W0613
+                module.weight.data = module.weight.evo_tensor
+                output = output.detach()
+                return output
+
+            @staticmethod
+            def backward(ctx: Any, grad_output: torch.Tensor) -> torch.Tensor:  # pylint: disable=W0613
+                module.weight.data = _gather(module.weight, self.parallel_mode, dim=self.emb_column)
+                return grad_output
+
+        def _pre_forward_hook(module, inputs):  # pylint: disable=W0613
+            return apply_to_tensors_only(PreModuleWrapper.apply, inputs)
+
+        def _post_forward_hook(module, inputs, output):  # pylint: disable=W0613
+            return apply_to_tensors_only(PostModuleWrapper.apply, output)
+
+        module.register_forward_pre_hook(_pre_forward_hook)
+        module.register_forward_hook(_post_forward_hook)
+
+        module.weight.register_post_accumulate_grad_hook(self.grad_reduce_hook)
+
+    def grad_reduce_hook(self, param: torch.Tensor):
+
+        _grad, _ = reduce_scatter_raw(
+            param.grad, gpc.get_group(self.parallel_mode), op=dist.ReduceOp.AVG, reduce_dim=self.emb_column
+        )
+        if param.evo_tensor.grad is None:
+            param.evo_tensor.grad = _grad
+        else:
+            param.evo_tensor.grad += _grad
+
+        param.data = param.evo_tensor
+        param.grad = None
+
+        self._cur_micro_step += 1
+        if self._cur_micro_step == self._num_micro_step:
+            param.grad = param.evo_tensor.grad
+            param.evo_tensor.grad = None
+            self._cur_micro_step = 0
 
 
 class ISPCommModelConfig:
@@ -258,8 +385,12 @@ class ISPCommunicator(WPCommunicator):
     def _parse_model_structure(self, cid: int, model: nn.Module) -> None:
         self._overlap_states[cid] = ISPOverlapState()
 
+        def get_model(obj: nn.Module) -> nn.Module:
+            return get_model(obj.model) if hasattr(obj, "model") else obj
+
         # Important: only works for llama-class models
-        for _, children in model.named_children():
+        children_name = get_model(model).named_children()
+        for _, children in children_name:
             if isinstance(children, nn.ModuleList):
                 self._overlap_states[cid].ckpt_block_num = int(self.model_conf.activation_checkpointing * len(children))
 
@@ -664,7 +795,7 @@ class DistributedAttention(nn.Module):
 
     def __init__(
         self,
-        local_attention: nn.Module,
+        local_attention: Union[nn.Module, Callable],
         sequence_process_group: dist.ProcessGroup,
     ) -> None:
         super().__init__()
@@ -677,7 +808,7 @@ class DistributedAttention(nn.Module):
 
     @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.With)))
     @forward.register(conditions=(str(QKVPackType.QKVPACKED), str(CuSeqlenType.WithOut)))
-    def _(self, qkv: torch.Tensor, **kwargs) -> torch.Tensor:
+    def _qkv(self, qkv: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         """forward
 
         Arguments:
@@ -691,7 +822,7 @@ class DistributedAttention(nn.Module):
         # scatter in n_head and gather in seqlen(packlen)
         qkv = _SeqAllToAll.apply(self.spg, qkv, 3, 1)
 
-        context = self.local_attn(qkv, **kwargs)
+        context = self.local_attn(qkv, *args, **kwargs)
 
         # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
@@ -701,7 +832,7 @@ class DistributedAttention(nn.Module):
 
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.With)))
     @forward.register(conditions=(str(QKVPackType.KVPACKED), str(CuSeqlenType.WithOut)))
-    def _(self, q: torch.Tensor, kv: torch.Tensor, **kwargs) -> torch.Tensor:
+    def _q_kv(self, q: torch.Tensor, kv: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         """forward
 
         Arguments:
@@ -719,7 +850,7 @@ class DistributedAttention(nn.Module):
         # scatter in n_head and gather in seqlen(packlen)
         kv = _SeqAllToAll.apply(self.spg, kv, 3, 1)
 
-        context = self.local_attn(q, kv, **kwargs)
+        context = self.local_attn(q, kv, *args, **kwargs)
 
         # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
@@ -729,7 +860,7 @@ class DistributedAttention(nn.Module):
 
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.With)))
     @forward.register(conditions=(str(QKVPackType.QKVSPLITED), str(CuSeqlenType.WithOut)))
-    def _(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, **kwargs) -> torch.Tensor:
+    def _q_k_v(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         """forward
 
         Arguments:
@@ -752,7 +883,7 @@ class DistributedAttention(nn.Module):
         # scatter in n_head and gather in seqlen(packlen)
         v = _SeqAllToAll.apply(self.spg, v, 2, 1)
 
-        context = self.local_attn(q, k, v, **kwargs)
+        context = self.local_attn(q, k, v, *args, **kwargs)
 
         # context shape: [1, packlen, n_head, head_dim] or [batch, seqlen, n_head, head_dim]
         # scatter in seqlen(packlen) and gather in n_head
@@ -770,7 +901,9 @@ def auto_wrap_distributed_attention(cls: nn.Module) -> Callable[[bool, Any, floa
     def _attetion_constructor(
         local_attn_cls: type, causal=False, softmax_scale=None, attention_dropout=0.0
     ) -> nn.Module:
-        if gpc.config.parallel["tensor"].get("mode", "mtp") != "isp":
+        tp_mode = gpc.config.parallel["tensor"].get("mode", TensorParallelMode.mtp.name)
+
+        if tp_mode != TensorParallelMode.isp.name:
             return local_attn_cls(causal, softmax_scale, attention_dropout)
         else:
             return DistributedAttention(
@@ -779,3 +912,21 @@ def auto_wrap_distributed_attention(cls: nn.Module) -> Callable[[bool, Any, floa
             )
 
     return partial(_attetion_constructor, local_attn_cls=cls)
+
+
+def auto_wrap_func_distributed_attention(func: Callable) -> Callable[..., Callable]:
+    """
+    Wrap a local attention function to a distributed one, which will be used in the ISP parallelism.
+    """
+
+    def _attention_func_constructor(*args, local_attn_func=None, **kwargs) -> Callable:
+        tp_mode = gpc.config.parallel["tensor"].get("mode", TensorParallelMode.mtp.name)
+
+        if tp_mode != TensorParallelMode.isp.name:
+            return local_attn_func(*args, **kwargs)
+        else:
+            return DistributedAttention(
+                local_attention=local_attn_func, sequence_process_group=gpc.get_group(ParallelMode.TENSOR)
+            )(*args, **kwargs)
+
+    return partial(_attention_func_constructor, local_attn_func=func)

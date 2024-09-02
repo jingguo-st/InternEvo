@@ -12,7 +12,7 @@ from internlm.model.builder import create_model
 from internlm.model.registry import register_model_initializer
 from internlm.solver.optimizer.hybrid_zero_optim import HybridZeroOptimizer
 from internlm.train.utils import create_param_groups
-from internlm.utils.storage_manager import SingletonMeta
+from internlm.utils.common import SingletonMeta
 
 OSS_NAME = os.environ.get("OSS_BUCKET_NAME", None)
 OSS_IP = os.environ.get("OSS_IP", None)
@@ -91,7 +91,7 @@ init_config = Config(
 
 def init_naive_model():
     register_model_initializer()
-    model = create_model(model_type=gpc.config.model_type, **(init_config.model))
+    model = create_model(model_type=gpc.config.model_type)
     model = NaiveAMPModel(
         model=model,
         output_to_fp32=False,

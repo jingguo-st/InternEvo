@@ -16,7 +16,6 @@ from internlm.utils.common import get_current_device, get_tensor_norm, move_norm
 from internlm.utils.logger import get_logger
 from internlm.utils.parallel import (
     is_replica_zero_parallel_parameter,
-    is_tensor_data_parallel_parameter,
     is_tensor_expert_data_parallel_parameter,
     is_tensor_zero_parallel_parameter,
     is_using_isp,
@@ -80,7 +79,14 @@ def split_half_float_double(tensor_list):
     return buckets
 
 
-def reduce_tensor(tensor, dtype=None, dst_rank=None, parallel_mode=ParallelMode.DATA):
+def reduce_tensor(
+    tensor,
+    dtype=None,
+    dst_rank=None,
+    parallel_mode=ParallelMode.DATA,
+    op_type=torch.distributed.ReduceOp.AVG,
+    async_op=True,
+):
     """
     Reduce the tensor in the data parallel process group
 
@@ -115,13 +121,11 @@ def reduce_tensor(tensor, dtype=None, dst_rank=None, parallel_mode=ParallelMode.
     use_all_reduce = dst_rank is None
 
     if use_all_reduce:
-        handle = dist.all_reduce(tensor=tensor, group=group, op=torch.distributed.ReduceOp.AVG, async_op=True)
+        handle = dist.all_reduce(tensor=tensor, group=group, op=op_type, async_op=async_op)
     else:
         ranks_in_group = gpc.get_ranks_in_group(parallel_mode)
         global_rank = ranks_in_group[dst_rank]
-        handle = dist.reduce(
-            tensor=tensor, dst=global_rank, group=group, op=torch.distributed.ReduceOp.AVG, async_op=True
-        )
+        handle = dist.reduce(tensor=tensor, dst=global_rank, group=group, op=op_type, async_op=async_op)
 
     return handle
 
@@ -241,9 +245,6 @@ def reduce_grads(gradients, parameters, weight_parallel_mode):
             is_replica_zero_parallel_parameter(p) and gpc.get_local_rank(weight_parallel_mode) == 0
         ):  # if not used in each chunk, such as layernorm IS_REPLICA_ZERO_PARALLEL parameter group
             parallel_grads.append(g.data.float())
-        elif is_tensor_data_parallel_parameter(p):
-            # process all ranks for IS_TENSOR_DATA_PARALLEL parameter group
-            parallel_grads.append(g.data.float())
         elif is_tensor_zero_parallel_parameter(p):
             # process all ranks for IS_TENSOR_ZERO_PARALLEL parameter group
             parallel_grads.append(g.data.float())
@@ -283,10 +284,7 @@ def compute_norm(gradients, parameters, norm_type=2, zero_mode=ParallelMode.ZERO
         total_norm_cuda = torch.tensor([float(total_norm)], device=gradients[0].device, dtype=torch.float32)
 
         # Take max across all model-parallel GPUs.
-        if is_tensor_data_parallel_parameter(parameters[0]):
-            if gpc.is_using_parallel_mode(ParallelMode.TENSOR):
-                dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.MAX, group=gpc.get_group(ParallelMode.TENSOR))
-        elif is_tensor_zero_parallel_parameter(parameters[0]):
+        if is_tensor_zero_parallel_parameter(parameters[0]):
             if gpc.is_using_parallel_mode(ParallelMode.TENSOR):
                 dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.MAX, group=gpc.get_group(ParallelMode.TENSOR))
         else:
@@ -322,17 +320,12 @@ def compute_norm(gradients, parameters, norm_type=2, zero_mode=ParallelMode.ZERO
         Sum across all model-parallel GPUs.
         1. For the IS_REPLICA_ZERO_PARALLEL parameter group, gradients from rank 0 in the tp/wp process group and
             gradients along the pp+zero dimensions from all ranks should be aggregated.
-        2. For the IS_TENSOR_DATA_PARALLEL parameter group, gradients along the tp+pp+zero(dp) dimensions
+        2. For the IS_TENSOR_ZERO_PARALLEL parameter group, gradients along the tp+pp+zero dimensions
             from all ranks should be aggregated.
-        3. For the IS_TENSOR_ZERO_PARALLEL parameter group, gradients along the tp+pp+zero dimensions
-            from all ranks should be aggregated.
-        4. For the IS_WEIGHT_ZERO_PARALLEL parameter group, gradients along the wp+pp+zero dimensions
+        3. For the IS_WEIGHT_ZERO_PARALLEL parameter group, gradients along the wp+pp+zero dimensions
             from all ranks should be aggregated.
         """
-        if is_tensor_data_parallel_parameter(parameters[0]):
-            if gpc.is_using_parallel_mode(ParallelMode.TENSOR):
-                dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=gpc.get_group(ParallelMode.TENSOR))
-        elif is_tensor_zero_parallel_parameter(parameters[0]):
+        if is_tensor_zero_parallel_parameter(parameters[0]):
             if gpc.is_using_parallel_mode(ParallelMode.TENSOR):
                 dist.all_reduce(total_norm, op=dist.ReduceOp.SUM, group=gpc.get_group(ParallelMode.TENSOR))
         else:
@@ -361,7 +354,7 @@ def compute_norm(gradients, parameters, norm_type=2, zero_mode=ParallelMode.ZERO
     # model and zero have been reduced!!!
     if zero_mode == ParallelMode.EXPERT_DATA:
         pg = gpc.get_group(ParallelMode.EXPERT)
-        scaled_norm = total_norm * 1.0 / float(gpc.get_world_size(ParallelMode.DATA))
+        scaled_norm = total_norm * 1.0 / float(gpc.get_world_size(ParallelMode.EXPERT))
         scaled_norm_tensor = torch.tensor(scaled_norm, device=get_current_device(), dtype=torch.float)
         dist.all_reduce(scaled_norm_tensor, group=pg)
         total_norm = scaled_norm_tensor.item()
@@ -448,6 +441,7 @@ class DynamicGradScaler(BaseGradScaler):
         min_scale: Optional[float] = None,
         max_scale: Optional[float] = None,
         hysteresis: int = 2,
+        dtype=torch.bfloat16,
     ):
         super().__init__(initial_scale)
         if min_scale:
@@ -466,17 +460,42 @@ class DynamicGradScaler(BaseGradScaler):
         self._growth_step = 0
         self._hysteresis = hysteresis
         self._hysteresis_step = 0
+        self._dtype = dtype
         self._sanity_checks()
 
     def _sanity_checks(self) -> None:
         """Check if the arguments are correct."""
 
-        if self._min_scale:
-            assert self._min_scale > 0, "The minimum gradient scale cannot be zero or negative"
+        assert self._dtype in [torch.float16, torch.bfloat16, torch.float32]
+
+        if self._min_scale is not None:
+            min_scale = self._min_scale.item()
+            assert min_scale > 0, "The minimum gradient scale cannot be zero or negative"
+
+            if self._dtype != torch.float16 and min_scale != 1.0 and gpc.is_rank_for_log():
+                logger.warning(f"Detect you use {self._dtype}, but min_scale: {min_scale} != 1.0")
+
         if self._max_scale:
-            assert self._min_scale > 0, "The maximum gradient scale cannot be zero or negative"
-        assert self._growth_factor > 1, "The growth factor cannot be equal or smaller than 1"
-        assert self._backoff_factor < 1 and self._backoff_factor > 0, "The backoff factor must be between 0 and 1"
+            max_scale = self._max_scale.item()
+            assert max_scale > 0, "The maximum gradient scale cannot be zero or negative"
+
+            if self._dtype != torch.float16 and max_scale != 1.0 and gpc.is_rank_for_log():
+                logger.warning(f"Detect you use {self._dtype}, but max_scale: {max_scale} != 1.0")
+
+        if self._dtype == torch.float16:
+            assert self._growth_factor > 1.0, "The growth factor cannot be equal or smaller than 1"
+            assert self._backoff_factor < 1.0 and self._backoff_factor > 0, "The backoff factor must be between 0 and 1"
+        else:
+            assert self._growth_factor >= 1.0, "The growth factor cannot be smaller than 1"
+            assert (
+                self._backoff_factor <= 1.0 and self._backoff_factor > 0
+            ), "The backoff factor must be between 0 and 1"
+
+            if self._growth_factor != 1.0 and gpc.is_rank_for_log():
+                logger.warning(f"Detect you use {self._dtype}, but growth_factor: {self._growth_factor} != 1.0")
+            if self._backoff_factor != 1.0 and gpc.is_rank_for_log():
+                logger.warning(f"Detect you use {self._dtype}, but backoff_factor: {self._backoff_factor} != 1.0")
+
         assert self._hysteresis >= 0, "The hysteresis cannot be negative"
 
     def update(self, overflow: bool) -> None:

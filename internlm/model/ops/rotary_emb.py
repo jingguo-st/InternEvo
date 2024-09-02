@@ -143,13 +143,14 @@ def rotary_emb_in_rotate_half_style(
         cos (Tensor): cos, shape is [S, D//2].
         sin (Tensor): sin, shape is [S, D//2].
     """
+    assert False, "This function has some bugs. You should not arrive here."
     # reformat cos/sin shape.
     cos = torch.cat((cos, cos), dim=-1)[None, :, None, :]
     sin = torch.cat((sin, sin), dim=-1)[None, :, None, :]
 
     if len(x.shape) == 5:
         q, k, _ = x.unbind(dim=2)
-
+        q, k = q.squeeze(dim=2), k.squeeze(dim=2)
         if interleaved:
             q = torch.cat([q[..., ::2], q[..., 1::2]], dim=-1)
             k = torch.cat([k[..., ::2], k[..., 1::2]], dim=-1)
@@ -299,6 +300,7 @@ def apply_rotary_emb(
     if internlm_accelerator.get_accelerator_backend() == AcceleratorType.DIPU:
         return DeeplinkApplyRotaryEmb.apply(x, cos, sin, interleaved, in_place)
     if internlm_accelerator.get_accelerator_backend() == AcceleratorType.NPU:
-        return rotary_emb_in_rotate_half_style(x, cos, sin, interleaved, use_fused_rope)
+        # return rotary_emb_in_rotate_half_style(x, cos, sin, interleaved, use_fused_rope)
+        return ApplyRotaryEmb.apply(x, cos, sin, interleaved, in_place)
     else:
         return ApplyRotaryEmb.apply(x, cos, sin, interleaved, in_place)

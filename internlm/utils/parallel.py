@@ -5,38 +5,32 @@ import torch.distributed as dist
 
 from internlm.core.context import (
     IS_REPLICA_ZERO_PARALLEL,
-    IS_TENSOR_DATA_PARALLEL,
     IS_TENSOR_EXPERT_DATA_PARALLEL,
     IS_TENSOR_ZERO_PARALLEL,
     IS_WEIGHT_ZERO_PARALLEL,
     ParallelMode,
 )
 from internlm.core.context import global_context as gpc
+from internlm.utils.utils import TensorParallelMode
 
 
 def is_using_sequence_parallel():
     return (
         isinstance(gpc.config.parallel["tensor"], dict)
-        and gpc.config.parallel["tensor"].get("mode", "mtp") != "mtp"
+        and gpc.config.parallel["tensor"].get("mode", TensorParallelMode.mtp.name) != TensorParallelMode.mtp.name
         and gpc.config.parallel["tensor"]["size"] > 1
     )
 
 
 def is_using_isp():
-    return isinstance(gpc.config.parallel["tensor"], dict) and gpc.config.parallel["tensor"].get("mode", "mtp") == "isp"
+    return (
+        isinstance(gpc.config.parallel["tensor"], dict)
+        and gpc.config.parallel["tensor"].get("mode", TensorParallelMode.mtp.name) == TensorParallelMode.isp.name
+    )
 
 
 def is_replica_zero_parallel_parameter(p):
     return hasattr(p, IS_REPLICA_ZERO_PARALLEL) and getattr(p, IS_REPLICA_ZERO_PARALLEL)
-
-
-def is_tensor_data_parallel_parameter(p):
-    return (
-        gpc.is_initialized(ParallelMode.TENSOR)
-        and is_using_isp()
-        and hasattr(p, IS_TENSOR_DATA_PARALLEL)
-        and getattr(p, IS_TENSOR_DATA_PARALLEL)
-    )
 
 
 def is_tensor_zero_parallel_parameter(p):

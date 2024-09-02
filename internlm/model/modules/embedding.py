@@ -10,6 +10,7 @@ from torch import Tensor, nn
 
 from internlm.core.context import global_context as gpc
 from internlm.model.ops.rotary_emb import apply_rotary_emb
+from internlm.utils.parallel import is_using_isp
 
 
 class Embedding1D(nn.Module):
@@ -42,7 +43,9 @@ class Embedding1D(nn.Module):
         self.embed_args = args
         self.embed_kwargs = kwargs
 
-        embed_dim_per_partition = embedding_dim // gpc.tensor_parallel_size
+        _parallel_size = gpc.weight_parallel_size if is_using_isp() else gpc.tensor_parallel_size
+
+        embed_dim_per_partition = embedding_dim // _parallel_size
         self.weight = nn.Parameter(torch.empty((num_embeddings, embed_dim_per_partition), dtype=dtype))
 
     def forward(self, input_: Tensor) -> Tensor:
@@ -94,7 +97,9 @@ class RotaryEmbedding(torch.nn.Module):
         if max_seqlen is not None:
             seqlen = max_seqlen
         elif isinstance(indexes, int):
-            seqlen = indexes + x.shape[1] + 1
+            # logic changed temporaryly
+            # seqlen = indexes + x.shape[1] + 1
+            seqlen = gpc.config.data.seq_len
         else:
             # Note that this statement may cause synchronization between CPU and GPU,
             # so it's best to precompute and pass in max_seqlen ahead of time
