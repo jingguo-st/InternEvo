@@ -113,6 +113,7 @@ def train(
         launcher = "slurm"
     else:
         launcher = "torch"
+        config.model.parallel_output = False
 
     initialize_distributed_env(config=config, launcher=launcher)
     assert hasattr(gpc, "config") and gpc.config is not None
@@ -158,7 +159,7 @@ def train(
     isp_communicator = initialize_parallel_communicator(model)
 
     # initialize loss function
-    criterion = FlashGPTLMLoss(parallel_output=True, label_smoothing=label_smoothing)
+    criterion = FlashGPTLMLoss(parallel_output=gpc.config.model.parallel_output, label_smoothing=label_smoothing)
 
     # initialize the train data loader
     train_dl, dataset_types = build_train_loader_with_data_type()
