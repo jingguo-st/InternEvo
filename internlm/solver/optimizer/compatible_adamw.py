@@ -48,7 +48,7 @@ def new_compatible_adamw(params, lr: float = 0.001, betas: Tuple[float, float] =
                 "accuracy issues and is not supported yet. Please note this!"
             )
         # TODO: support npu version adamw
-    elif backend is AcceleratorType.DIPU and deeplink_adamw_impl:
+    elif backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_adamw_impl:
         if gpc.is_rank_for_log():
             logger.warning(
                 "Use Deeplink FusedAdamW to avoid nan grad norm when "

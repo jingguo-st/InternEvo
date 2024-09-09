@@ -62,6 +62,7 @@ def _get_scatter_sum_impl():
     if cuda_scatter_impl and internlm_accelerator.get_accelerator_backend() in (
         AcceleratorType.GPU,
         AcceleratorType.DIPU,
+        AcceleratorType.DITORCH,
     ):
         if gpc.is_rank_for_log():
             logger.warning("Use cuda_scatter. Please note this!")

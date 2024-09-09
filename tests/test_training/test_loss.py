@@ -106,6 +106,7 @@ def train(
     if tp_mode == "isp" and internlm_accelerator.get_accelerator_backend() in [
         AcceleratorType.NPU,
         AcceleratorType.DIPU,
+        AcceleratorType.DITORCH,
     ]:
         config.data.use_packed_dataset = False
 

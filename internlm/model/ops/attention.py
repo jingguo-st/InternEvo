@@ -696,7 +696,7 @@ class SelfAttention(nn.Module):
                 return _flash_fixedlen_qkvpacked_attn(qkv, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
                 return _npu_fixedlen_qkvpacked_attn(qkv, self.dropout.p, softmax_scale, causal)
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_fixedlen_qkvpacked_attn(qkv, self.dropout.p, softmax_scale, causal)
             else:
                 raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
@@ -713,7 +713,7 @@ class SelfAttention(nn.Module):
                 return _flash_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
                 return _npu_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
             else:
                 raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
@@ -730,7 +730,7 @@ class SelfAttention(nn.Module):
                 return _flash_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
                 return _npu_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
             else:
                 raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
@@ -755,7 +755,7 @@ class SelfAttention(nn.Module):
                 return _flash_varlen_qkvpacked_attn(qkv, cu_seqlens, max_seqlen, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
                 return _npu_varlen_qkvpacked_attn(qkv, cu_seqlens, max_seqlen, self.dropout.p, softmax_scale, causal)
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_varlen_qkvpacked_attn(
                     qkv, cu_seqlens, max_seqlen, self.dropout.p, softmax_scale, causal
                 )
@@ -791,7 +791,7 @@ class SelfAttention(nn.Module):
                 return _npu_varlen_kvpacked_attn(
                     q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, self.dropout.p, softmax_scale, causal
                 )
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_varlen_kvpacked_attn(
                     q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, self.dropout.p, softmax_scale, causal
                 )
@@ -855,7 +855,7 @@ class SelfAttention(nn.Module):
                     softmax_scale,
                     causal,
                 )
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_varlen_qkvsplited_attn(
                     q,
                     k,
@@ -935,7 +935,7 @@ class CrossAttention(nn.Module):
                 return _flash_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
                 return _npu_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_fixedlen_kvpacked_attn(q, kv, self.dropout.p, softmax_scale, causal)
             else:
                 raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
@@ -952,7 +952,7 @@ class CrossAttention(nn.Module):
                 return _flash_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
             elif device_backend == AcceleratorType.NPU and is_torch_npu:
                 return _npu_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_fixedlen_qkvsplited_attn(q, k, v, self.dropout.p, softmax_scale, causal)
             else:
                 raise NotImplementedError(f"Unsupported device type: {device_backend} for flash attention")
@@ -984,7 +984,7 @@ class CrossAttention(nn.Module):
                 return _npu_varlen_kvpacked_attn(
                     q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, self.dropout.p, softmax_scale, causal
                 )
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_varlen_kvpacked_attn(
                     q, kv, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, self.dropout.p, softmax_scale, causal
                 )
@@ -1048,7 +1048,7 @@ class CrossAttention(nn.Module):
                     softmax_scale,
                     causal,
                 )
-            elif device_backend == AcceleratorType.DIPU and deeplink_flash_attn_impl:
+            elif device_backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_flash_attn_impl:
                 return _deeplink_varlen_qkvsplited_attn(
                     q,
                     k,

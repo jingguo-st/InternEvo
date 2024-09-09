@@ -108,7 +108,7 @@ class _RMSNormNPU(torch.nn.Module):
 
 # TODO: Support deeplink in a more unified manner
 backend = internlm_accelerator.get_accelerator_backend()
-if backend == AcceleratorType.DIPU and deeplink_rmsnorm_impl:
+if backend in [AcceleratorType.DIPU, AcceleratorType.DITORCH] and deeplink_rmsnorm_impl:
     RMSNorm = _RMSNormDIPU
 elif backend == AcceleratorType.NPU and torchnpu_rmsnorm_impl:
     RMSNorm = _RMSNormNPU
